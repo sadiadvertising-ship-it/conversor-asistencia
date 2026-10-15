@@ -78,7 +78,7 @@ class App(tk.Tk):
         tk.Label(cab, text=APP, bg=AZUL, fg="white",
                  font=("Segoe UI", 18, "bold")).pack(anchor="w")
         tk.Label(cab, bg=AZUL, fg="#DCE6F5", font=("Segoe UI", 10),
-                 text="Separa la columna Fecha/Hora del Reporte de Eventos en Fecha y Hora. "
+                 text="Separa la columna Fecha/Hora (o Tiempo) del reporte del reloj en Fecha y Hora. "
                       "El archivo original no se modifica.").pack(anchor="w")
 
         self.estado = tk.StringVar(value="Seleccione el reporte exportado del software (Ctrl+O).")
@@ -128,7 +128,7 @@ class App(tk.Tk):
         # Vista previa del reporte seleccionado
         self.marco_prev = ttk.LabelFrame(cuerpo, text="Vista previa", padding=8)
         self.marco_prev.pack(fill="both", expand=True, pady=(12, 0))
-        cols = ("id", "nombre", "fecha", "hora", "original", "tipo")
+        cols = ("id", "nombre", "fecha", "hora", "original", "tipo", "terminal")
         self.prev = ttk.Treeview(self.marco_prev, columns=cols, show="headings")
         for col, titulo, ancho, anchor in (
             ("id", "ID de Usuario", 100, "center"),
@@ -137,6 +137,7 @@ class App(tk.Tk):
             ("hora", "Hora", 80, "center"),
             ("original", "Fecha/Hora original", 160, "center"),
             ("tipo", "Tipo de Registro", 130, "w"),
+            ("terminal", "Terminal", 120, "w"),
         ):
             self.prev.heading(col, text=titulo)
             self.prev.column(col, width=self.px(ancho), anchor=anchor)
@@ -237,7 +238,7 @@ class App(tk.Tk):
                 fecha = hora = "—"
             self.prev.insert("", "end", tags=() if partes else ("aviso",), values=(
                 reg["ID de Usuario"] or "", reg["Nombre Completo"] or "", fecha, hora,
-                reg["Fecha/Hora"] or "", reg["Tipo de Registro"] or ""))
+                reg["Fecha/Hora"] or "", reg["Tipo de Registro"] or "", reg["Terminal"] or ""))
 
     def abrir_excel(self):
         r = self._actual()

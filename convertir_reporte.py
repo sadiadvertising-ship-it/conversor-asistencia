@@ -1,5 +1,8 @@
 """
-Conversor del "Reporte de Eventos" de asistencia.
+Conversor de los reportes de asistencia del reloj.
+
+Acepta el "Reporte de Eventos" (columna "Fecha/Hora") y la exportación
+nueva (columna "Tiempo", con "Nombre de la Terminal").
 
 Separa la columna "Fecha/Hora" (texto MM/DD/YYYY HH:MM) en dos columnas:
 "Fecha" y "Hora", como valores reales de Excel. El archivo original NUNCA
@@ -20,13 +23,18 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 COL_FECHA_HORA = "Fecha/Hora"
-COLUMNAS_ORIGEN = [
-    "ID de Usuario",
-    "Nombre Completo",
-    COL_FECHA_HORA,
-    "Código de Trabajo",
-    "Tipo de Registro",
-]
+# Nombre interno -> encabezados posibles. Cada exportación del reloj nombra
+# distinto las mismas columnas; el primero de cada lista es el del Reporte
+# de Eventos y gana si un archivo trae los dos.
+ALIAS = {
+    "ID de Usuario": ["ID de Usuario"],
+    "Nombre Completo": ["Nombre Completo", "Nombre"],
+    COL_FECHA_HORA: [COL_FECHA_HORA, "Tiempo"],
+    "Código de Trabajo": ["Código de Trabajo", "Código de Pago"],
+    "Tipo de Registro": ["Tipo de Registro", "Estado de Trabajo"],
+    "Terminal": ["Nombre de la Terminal"],
+}
+COLUMNAS_ORIGEN = list(ALIAS)
 FORMATOS = ["%m/%d/%Y %H:%M", "%m/%d/%Y %H:%M:%S"]
 FILAS_BUSQUEDA_ENCABEZADO = 60
 
@@ -39,15 +47,30 @@ def texto(valor):
     return "" if valor is None else str(valor).strip()
 
 
+def clave(valor):
+    return " ".join(texto(valor).lower().split())
+
+
+def es_fecha_hora(valor):
+    return clave(valor) in [clave(a) for a in ALIAS[COL_FECHA_HORA]]
+
+
 def buscar_encabezado(filas):
     """Devuelve (indice_fila, {nombre_columna: indice_columna})."""
     for i, fila in enumerate(filas[:FILAS_BUSQUEDA_ENCABEZADO]):
-        nombres = [texto(c) for c in fila]
-        if COL_FECHA_HORA in nombres:
-            mapa = {n: nombres.index(n) for n in COLUMNAS_ORIGEN if n in nombres}
-            return i, mapa
+        nombres = [clave(c) for c in fila]
+        if not any(es_fecha_hora(n) for n in nombres):
+            continue
+        mapa = {}
+        for col, alias in ALIAS.items():
+            for a in alias:
+                if clave(a) in nombres:
+                    mapa[col] = nombres.index(clave(a))
+                    break
+        return i, mapa
+    posibles = " ni ".join(f"'{a}'" for a in ALIAS[COL_FECHA_HORA])
     raise ErrorReporte(
-        f"No se encontró la columna '{COL_FECHA_HORA}' en las primeras "
+        f"No se encontró la columna {posibles} en las primeras "
         f"{FILAS_BUSQUEDA_ENCABEZADO} filas. ¿Es el reporte correcto?"
     )
 
@@ -93,7 +116,7 @@ def leer_reporte(ruta):
     for n, fila in enumerate(filas[i_enc + 1:], start=i_enc + 2):
         fh = celda(fila, COL_FECHA_HORA)
         nombre = celda(fila, "Nombre Completo")
-        if texto(fh) == COL_FECHA_HORA:
+        if es_fecha_hora(fh):
             continue  # encabezado repetido
         if texto(fh) == "":
             if texto(nombre):
@@ -105,7 +128,13 @@ def leer_reporte(ruta):
         if reg["partes"] is None:
             revisar.append((n, f"Fecha/Hora con formato no reconocido: {fh!r}", fila))
         registros.append(reg)
-    return registros, revisar, rango
+
+    # La exportación nueva no trae la fila "Desde ... Hasta ..."
+    if not rango:
+        fechas = [r["partes"][0] for r in registros if r["partes"]]
+        if fechas:
+            rango = f"Del {min(fechas):%d/%m/%Y} al {max(fechas):%d/%m/%Y}"
+    return registros, revisar, rango, "Terminal" in mapa
 
 
 def ajustar_anchos(ws, minimo=10, maximo=45):
@@ -121,14 +150,14 @@ def estilo_encabezado(ws):
         c.alignment = Alignment(horizontal="center")
 
 
-def escribir_salida(ruta_origen, registros, revisar, rango, ruta_salida):
+def escribir_salida(ruta_origen, registros, revisar, rango, ruta_salida, con_terminal=False):
     wb = Workbook()
     ws = wb.active
     ws.title = "Registros"
     ws.append([
         "ID de Usuario", "Nombre Completo", "Fecha", "Hora",
         "Fecha/Hora original", "Código de Trabajo", "Tipo de Registro",
-    ])
+    ] + (["Terminal"] if con_terminal else []))
     amarillo = PatternFill("solid", fgColor="FFF2CC")
     for reg in registros:
         partes = reg["partes"]
@@ -136,7 +165,7 @@ def escribir_salida(ruta_origen, registros, revisar, rango, ruta_salida):
         ws.append([
             reg["ID de Usuario"], reg["Nombre Completo"], fecha, hora,
             reg[COL_FECHA_HORA], reg["Código de Trabajo"], reg["Tipo de Registro"],
-        ])
+        ] + ([reg["Terminal"]] if con_terminal else []))
         r = ws.max_row
         ws.cell(r, 3).number_format = "DD/MM/YYYY"
         ws.cell(r, 4).number_format = "HH:MM:SS" if partes and partes[2] else "HH:MM"
@@ -187,10 +216,10 @@ def procesar(ruta):
     if ruta.stem.endswith("_convertido"):
         raise ErrorReporte("Este archivo ya es un resultado convertido.")
 
-    registros, revisar, rango = leer_reporte(ruta)
+    registros, revisar, rango, con_terminal = leer_reporte(ruta)
     ruta_salida = ruta.with_name(f"{ruta.stem}_convertido.xlsx")
     try:
-        convertidos = escribir_salida(ruta, registros, revisar, rango, ruta_salida)
+        convertidos = escribir_salida(ruta, registros, revisar, rango, ruta_salida, con_terminal)
     except PermissionError:
         raise ErrorReporte(
             f"No se pudo guardar {ruta_salida.name}. Probablemente está abierto "
